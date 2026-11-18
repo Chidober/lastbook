@@ -1,4 +1,5 @@
 # Source only. The library, models, packs and everything built from them stay out.
+/data/
 /library-data
 /derived/*
 !/derived/packs/

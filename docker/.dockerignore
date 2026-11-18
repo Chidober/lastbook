@@ -1,0 +1,16 @@
+.git
+.github
+**/__pycache__
+**/*.pyc
+.venv
+derived
+library-data
+mobile
+website
+website-next
+*.gguf
+*.zim
+*.zip
+*.dmg
+*.exe
+docker/lmstudio.env

@@ -1,0 +1,32 @@
+# Prefer the interactive wizard:
+#   bash docker/deploy.sh
+#
+# Or non-interactive:
+#   cp docker/lmstudio.env.sample docker/lmstudio.env  # edit
+#   docker compose -f docker/compose.yml --env-file docker/lmstudio.env up -d --build
+services:
+  lastbook:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: lastbook-server:local
+    container_name: lastbook
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      LASTBOOK_DATA: /data/LastbookData
+      XDG_CONFIG_HOME: /data/config
+      PORT: ${LASTBOOK_PORT:-8890}
+      MODEL_PROXY_PORT: "19443"
+      SURVIVAL_MODEL_BASE: http://127.0.0.1:19443
+      LMSTUDIO_URL: ${LMSTUDIO_URL:?set LMSTUDIO_URL}
+      LMSTUDIO_TOKEN: ${LMSTUDIO_TOKEN:?set LMSTUDIO_TOKEN}
+      SURVIVAL_MODEL: ${SURVIVAL_MODEL:?set SURVIVAL_MODEL}
+      SURVIVAL_REASONING_EFFORT: ${SURVIVAL_REASONING_EFFORT:-none}
+      LASTBOOK_LAN: ${LASTBOOK_LAN:-0}
+    volumes:
+      # Prefer absolute paths (deploy.sh writes $PWD/data/...). Relative paths are
+      # resolved from the compose file's directory (docker/).
+      - ${LASTBOOK_DATA_HOST:?set LASTBOOK_DATA_HOST}:/data/LastbookData
+      # Setup job + pending switch (must survive restart)
+      - ${LASTBOOK_CONFIG_HOST:?set LASTBOOK_CONFIG_HOST}:/data/config
