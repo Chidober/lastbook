@@ -155,20 +155,50 @@ wait_http() {
   return 1
 }
 
+wait_manifest_pack() {
+  local base="$1" pack="$2" tries="${3:-60}"
+  local i=0 state ready
+  info "拉取/等待 setup manifest（pack=${pack}）…"
+  while [ "$i" -lt "$tries" ]; do
+    # GET state triggers Manifest.fetch_once() in the server.
+    state="$(curl -sS --connect-timeout 2 --max-time 15 "${base}/api/setup/state" 2>/dev/null || echo '{}')"
+    ready="$(printf '%s' "$state" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+packs=(d.get("manifest") or {}).get("packs") or []
+want=sys.argv[1]
+print("yes" if any(p.get("id")==want and p.get("available") for p in packs) else "no")
+print((d.get("manifest") or {}).get("source") or "?")
+print(len(packs))
+' "$pack" 2>/dev/null || printf 'no\n?\n0\n')"
+    if [ "$(printf '%s' "$ready" | sed -n '1p')" = "yes" ]; then
+      ok "manifest 已就绪（source=$(printf '%s' "$ready" | sed -n '2p'), packs=$(printf '%s' "$ready" | sed -n '3p')）"
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  echo "$state" | python3 -m json.tool 2>/dev/null | head -80 || echo "$state"
+  die "manifest 中没有可用的 pack=${pack}。检查容器能否访问 https://downloads.lastbook.org/manifest-v1.json"
+}
+
 start_pack_download() {
   local port="$1" pack="$2"
   local base="http://127.0.0.1:${port}"
+  wait_manifest_pack "$base" "$pack" 90
   info "触发资源下载: pack=${pack}（不含官方 GGUF，AI 走 LM Studio）"
-  local resp
-  resp="$(curl -fsS -X POST "${base}/api/setup/start" \
+  local http_code resp
+  resp="$(curl -sS -w $'\n%{http_code}' -X POST "${base}/api/setup/start" \
     -H 'Content-Type: application/json' \
-    -d "{\"pack\":\"${pack}\",\"ai\":false}" )" || die "无法调用 /api/setup/start: 请确认服务已启动且本机可访问 127.0.0.1:${port}"
-  if printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if not d.get("error") else 1)' 2>/dev/null; then
-    ok "下载任务已开始"
-  else
+    -d "{\"pack\":\"${pack}\",\"ai\":false}" )" || die "无法连接 ${base}/api/setup/start"
+  http_code="$(printf '%s' "$resp" | tail -n1)"
+  resp="$(printf '%s' "$resp" | sed '$d')"
+  if [ "$http_code" != "200" ] || ! printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if not d.get("error") else 1)' 2>/dev/null; then
+    echo "HTTP ${http_code}"
     echo "$resp" | python3 -m json.tool 2>/dev/null || echo "$resp"
-    die "启动下载失败（见上方 JSON）。若库已存在可选「跳过下载」。"
+    die "启动下载失败。常见原因: unavailable(无manifest)、nothing(已是该包)、no_space。可改选「跳过下载」或换更大磁盘。"
   fi
+  ok "下载任务已开始"
 
   echo
   info "下载进度（可 Ctrl+C 中断监视；容器内任务会继续）"
@@ -409,7 +439,10 @@ else
 fi
 
 HAS_LIB=0
-if [ -f "$LASTBOOK_DATA_HOST/library-data/catalog.json" ]; then
+# Real library: non-empty catalog (seeded "[]" or missing file does not count).
+if [ -f "$LASTBOOK_DATA_HOST/library-data/catalog.json" ] \
+   && python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); sys.exit(0 if (isinstance(d,list) and len(d)>0) or (isinstance(d,dict) and d) else 1)' \
+        "$LASTBOOK_DATA_HOST/library-data/catalog.json" 2>/dev/null; then
   HAS_LIB=1
   ok "已检测到现有图书馆 catalog.json"
 fi

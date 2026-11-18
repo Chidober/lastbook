@@ -26,11 +26,18 @@ export MODEL_PROXY_PORT
 export XDG_CONFIG_HOME
 export LMSTUDIO_URL
 export LMSTUDIO_TOKEN
-mkdir -p "$XDG_CONFIG_HOME" "$LASTBOOK_DATA" "$LASTBOOK_DATA/derived" "$LASTBOOK_DATA/library-data"
-# Allow server boot before any pack is downloaded (setup UI / API still works).
-if [ ! -f "$LASTBOOK_DATA/library-data/catalog.json" ]; then
-  echo '[]' > "$LASTBOOK_DATA/library-data/catalog.json"
-  echo "seeded empty catalog.json (no library yet)"
+mkdir -p "$XDG_CONFIG_HOME" "$LASTBOOK_DATA" "$LASTBOOK_DATA/derived" "$LASTBOOK_DATA/library-data" /app/setup
+# Source tree has no release manifest; fetch once so /api/setup/start knows Small/Medium/All URLs.
+if [ ! -s /app/setup/manifest-v1.json ]; then
+  echo "fetching setup manifest from downloads.lastbook.org…"
+  if curl -fsS --connect-timeout 15 --max-time 60 \
+      -o /app/setup/manifest-v1.json \
+      https://downloads.lastbook.org/manifest-v1.json; then
+    echo "manifest saved ($(wc -c < /app/setup/manifest-v1.json) bytes)"
+  else
+    echo "WARNING: could not fetch manifest-v1.json; setup downloads may be unavailable until /api/setup/state fetches it" >&2
+    rm -f /app/setup/manifest-v1.json
+  fi
 fi
 
 # Use the HTTP model path, not the bundled GGUF runner.
