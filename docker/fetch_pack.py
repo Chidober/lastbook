@@ -5,6 +5,7 @@ The zip is saved under <dest>/.download and extracted there. Members live under
 LastbookData/ inside the zip; that prefix is stripped so library-data/ and
 derived/ are written in dest. Nothing is staged elsewhere and then copied.
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -43,6 +44,17 @@ def manifest():
         data = json.load(r)
     packs = {p['id']: p for p in data.get('packs') or [] if p.get('available')}
     return packs
+
+
+def exclusive(path):
+    """One download per zip. A second deploy must not open another connection to the same file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, 'a')
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        die(f'已有下载在写 {path.parent.name}/{path.name}，这次不再另开一路。')
+    return fh
 
 
 def download(url, dest, size, sha256):
@@ -164,6 +176,7 @@ def main():
     cache = dest / '.download'
     for f in pack['files']:
         zip_path = cache / f['name']
+        held = exclusive(cache / (f['name'] + '.lock'))
         complete = zip_path.is_file() and f.get('size') and zip_path.stat().st_size == f['size']
         if not complete:
             print(f'downloading {f["name"]} into {cache}', flush=True)
@@ -171,6 +184,7 @@ def main():
         print(f'extracting {f["name"]} into {dest}', flush=True)
         extract(zip_path, dest)
         zip_path.unlink()
+        held.close()
     try:
         cache.rmdir()
     except OSError:

@@ -384,6 +384,17 @@ PY
 
 write_env
 
+BUILD_PID=
+on_stop() {
+  echo
+  echo "已中断。当前图书馆下载会停下；未下完的文件留在目标目录的 .download/*.part，下次从断点继续，不会把已下的部分再下一遍。"
+  if [ -n "${BUILD_PID:-}" ] && kill -0 "$BUILD_PID" 2>/dev/null; then
+    kill "$BUILD_PID" 2>/dev/null || true
+  fi
+  exit 130
+}
+trap on_stop INT TERM
+
 info "后台构建镜像，同时下载资源…"
 (cd "$ROOT" && docker compose -f "$COMPOSE_FILE" -f "$LIBS_FILE" --env-file "$ENV_FILE" build) &
 BUILD_PID=$!
