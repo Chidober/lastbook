@@ -57,6 +57,43 @@ def exclusive(path):
     return fh
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for buf in iter(lambda: f.read(8 * 1024 * 1024), b''):
+            digest.update(buf)
+    return digest.hexdigest()
+
+
+def part_path(zip_path):
+    return zip_path.with_suffix(zip_path.suffix + '.part')
+
+
+def have_zip(zip_path, size, sha256):
+    """A finished zip, or a .part that already has every byte. Verify it, then keep the zip and skip the network."""
+    candidates = [p for p in (zip_path, part_path(zip_path)) if p.is_file()]
+    for path in candidates:
+        if size and path.stat().st_size != size:
+            continue
+        print(f'checking existing {path}', flush=True)
+        if sha256 and sha256_file(path) != sha256:
+            print(f'{path} is the right size but the checksum does not match; downloading again', flush=True)
+            continue
+        if path != zip_path:
+            os.replace(path, zip_path)
+        return True
+    return False
+
+
+def locate_zip(name, size, sha256, folders):
+    """Look in the mount directory itself, then in its .download folder."""
+    for folder in folders:
+        zip_path = Path(folder) / name
+        if have_zip(zip_path, size, sha256):
+            return zip_path
+    return None
+
+
 def download(url, dest, size, sha256):
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + '.part')
@@ -175,10 +212,12 @@ def main():
         die(f'pack {pack_id} is not in the manifest')
     cache = dest / '.download'
     for f in pack['files']:
-        zip_path = cache / f['name']
         held = exclusive(cache / (f['name'] + '.lock'))
-        complete = zip_path.is_file() and f.get('size') and zip_path.stat().st_size == f['size']
-        if not complete:
+        zip_path = locate_zip(f['name'], f.get('size') or 0, f.get('sha256') or '', (dest, cache))
+        if zip_path:
+            print(f'{zip_path} already downloaded; extracting', flush=True)
+        else:
+            zip_path = cache / f['name']
             print(f'downloading {f["name"]} into {cache}', flush=True)
             download(f['url'], zip_path, f.get('size') or 0, f.get('sha256') or '')
         print(f'extracting {f["name"]} into {dest}', flush=True)
