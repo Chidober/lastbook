@@ -3,7 +3,7 @@
 #
 # Or non-interactive:
 #   cp docker/lmstudio.env.sample docker/lmstudio.env  # edit
-#   docker compose -f docker/compose.yml --env-file docker/lmstudio.env up -d --build
+#   docker compose -f docker/compose.yml -f docker/compose.libraries.yml --env-file docker/lmstudio.env up -d --build
 services:
   lastbook:
     build:
@@ -24,8 +24,5 @@ services:
       SURVIVAL_MODEL: ${SURVIVAL_MODEL:?set SURVIVAL_MODEL}
       SURVIVAL_REASONING_EFFORT: ${SURVIVAL_REASONING_EFFORT:-none}
       LASTBOOK_LAN: ${LASTBOOK_LAN:-0}
-    volumes:
-      # Mount the parent, not LastbookData itself. Setup downloads into
-      # /data/LastbookData.setup and renames that folder into /data/LastbookData.
-      # A mount point cannot be renamed, which leaves the host folder nearly empty.
-      - ${LASTBOOK_HOST_ROOT:?set LASTBOOK_HOST_ROOT}:/data
+    # Library mounts are added by docker/compose.libraries.yml (one host directory per pack).
+    # Do not mount LastbookData itself: that path has to be a normal directory.

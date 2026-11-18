@@ -1891,6 +1891,16 @@ class Handler(library.Handler):
         if not ok:
             return self.deny()
         rpath = urllib.parse.urlsplit(self.path).path
+        if rpath == '/api/libraries/use':
+            from docker.libraries import use
+            try:
+                n = int(self.headers.get('Content-Length') or 0)
+                body = json.loads(self.rfile.read(min(max(n, 0), 4000)) or b'{}')
+                lib_id = body.get('id') if isinstance(body, dict) else None
+            except (ValueError, TypeError):
+                return self.send_json({'error': 'bad request'}, 400)
+            result = use(str(lib_id or ''))
+            return self.send_json(result, 400 if result.get('error') else 200)
         if rpath.startswith('/api/setup/'):  # first-run setup and Library and local AI: engine/setup/api.py, this computer only
             return setup_api.handle(self, 'POST', rpath)
         if rpath.startswith('/api/update/'):  # Check for updates, when the person asks: engine/update.py, this computer only
@@ -1982,6 +1992,9 @@ class Handler(library.Handler):
             if not self.path_ok(path):
                 return self.send_json({'error': 'not found'}, 404)
             qs = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+            if path == '/api/libraries':
+                from docker.libraries import public
+                return self.send_json(public())
             if path.startswith('/api/setup/'):
                 return setup_api.handle(self, 'GET', path)
             if path.startswith('/api/update/'):

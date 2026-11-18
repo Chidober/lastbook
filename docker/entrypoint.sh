@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+: "${LASTBOOK_LIBRARIES:=/data/config/libraries.json}"
+if [ -f "$LASTBOOK_LIBRARIES" ]; then
+  SEL="$(python3 -c 'import os,sys; sys.path.insert(0,"/app"); from docker.libraries import active_path; print(active_path() or "")')"
+  if [ -n "$SEL" ]; then
+    LASTBOOK_DATA="$SEL"
+    echo "library: $LASTBOOK_DATA"
+  fi
+fi
 : "${LASTBOOK_DATA:=/data/LastbookData}"
 : "${MODEL_PROXY_PORT:=19443}"
 : "${SURVIVAL_MODEL_BASE:=http://127.0.0.1:${MODEL_PROXY_PORT}}"
@@ -21,6 +29,7 @@ if [ -z "${SURVIVAL_MODEL:-}" ]; then
 fi
 
 export LASTBOOK_DATA
+export LASTBOOK_LIBRARIES
 export SURVIVAL_MODEL_BASE
 export MODEL_PROXY_PORT
 export XDG_CONFIG_HOME

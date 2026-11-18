@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Download a Lastbook pack straight into a directory (the host mount).
+
+The zip is saved under <dest>/.download and extracted there. Members live under
+LastbookData/ inside the zip; that prefix is stripped so library-data/ and
+derived/ are written in dest. Nothing is staged elsewhere and then copied.
+"""
+import hashlib
+import json
+import os
+import sys
+import urllib.request
+import zipfile
+from pathlib import Path
+
+MANIFEST = 'https://downloads.lastbook.org/manifest-v1.json'
+
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def manifest():
+    with urllib.request.urlopen(MANIFEST, timeout=60) as r:
+        data = json.load(r)
+    packs = {p['id']: p for p in data.get('packs') or [] if p.get('available')}
+    return packs
+
+
+def download(url, dest, size, sha256):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_suffix(dest.suffix + '.part')
+    got = part.stat().st_size if part.exists() else 0
+    headers = {'User-Agent': 'lastbook-fetch'}
+    if got and (not size or got < size):
+        headers['Range'] = f'bytes={got}-'
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=120) as r, open(part, 'ab' if got else 'wb') as f:
+        if r.status == 200 and got:
+            f.seek(0)
+            f.truncate()
+        while True:
+            buf = r.read(8 * 1024 * 1024)
+            if not buf:
+                break
+            f.write(buf)
+            got += len(buf)
+            print(f'\r  {dest.name}: {got / 1e9:.2f} GB', end='', file=sys.stderr, flush=True)
+    print(file=sys.stderr)
+    digest = hashlib.sha256()
+    with open(part, 'rb') as f:
+        for buf in iter(lambda: f.read(8 * 1024 * 1024), b''):
+            digest.update(buf)
+    if sha256 and digest.hexdigest() != sha256:
+        die(f'checksum mismatch for {dest.name}')
+    os.replace(part, dest)
+    return dest
+
+
+def extract(zip_path, dest):
+    dest = Path(dest)
+    with zipfile.ZipFile(zip_path) as z:
+        for info in z.infolist():
+            name = info.filename.replace('\\', '/')
+            if name.startswith('/') or '..' in name.split('/'):
+                die(f'refused path in zip: {name}')
+            parts = [p for p in name.split('/') if p not in ('', '.')]
+            if not parts:
+                continue
+            if parts[0] == 'LastbookData':
+                parts = parts[1:]
+            if not parts:
+                continue
+            target = dest.joinpath(*parts)
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            mode = (info.external_attr >> 16) & 0o170000
+            if mode and mode not in (0o100000, 0o040000):
+                die(f'refused special file in zip: {name}')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with z.open(info) as src, open(target, 'wb') as out:
+                while True:
+                    buf = src.read(8 * 1024 * 1024)
+                    if not buf:
+                        break
+                    out.write(buf)
+
+
+def ready(dest):
+    p = Path(dest) / 'library-data' / 'catalog.json'
+    try:
+        data = json.loads(p.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    return bool(data)
+
+
+def main():
+    pack_id, dest, force = None, None, False
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == '--pack':
+            pack_id = args[i + 1]
+            i += 2
+        elif args[i] == '--dest':
+            dest = args[i + 1]
+            i += 2
+        elif args[i] == '--force':
+            force = True
+            i += 1
+        else:
+            die(f'unknown argument {args[i]}')
+    if not pack_id or not dest:
+        die('usage: fetch_pack.py --pack small|medium|all --dest /path [--force]')
+    dest = Path(dest)
+    if ready(dest) and not force:
+        print(f'{dest} already has a library; skip (pass --force to replace files in place)')
+        return
+    packs = manifest()
+    pack = packs.get(pack_id)
+    if not pack:
+        die(f'pack {pack_id} is not in the manifest')
+    cache = dest / '.download'
+    for f in pack['files']:
+        zip_path = cache / f['name']
+        complete = zip_path.is_file() and f.get('size') and zip_path.stat().st_size == f['size']
+        if not complete:
+            print(f'downloading {f["name"]} into {cache}', flush=True)
+            download(f['url'], zip_path, f.get('size') or 0, f.get('sha256') or '')
+        print(f'extracting {f["name"]} into {dest}', flush=True)
+        extract(zip_path, dest)
+        zip_path.unlink()
+    try:
+        cache.rmdir()
+    except OSError:
+        pass
+    if not ready(dest):
+        die(f'extract finished but {dest}/library-data/catalog.json is empty')
+    print(f'ready: {dest}')
+
+
+if __name__ == '__main__':
+    main()
