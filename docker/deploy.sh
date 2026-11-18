@@ -221,6 +221,15 @@ for raw in re.findall(r"^\s+-\s+(.+)$", text, re.M):
         print(m.group(1) + "\t" + host)
 ' "$LIBS_FILE")
 fi
+for id in small medium all; do
+  [ -n "${PREV_LIB_PATH[$id]:-}" ] && continue
+  for guess in "$ROOT/data/$id" "$ROOT/data/LastbookData"; do
+    if [ -d "$guess" ] && python3 "$ROOT/docker/fetch_pack.py" --check --pack "$id" --dest "$guess"; then
+      PREV_LIB_PATH[$id]="$guess"
+      break
+    fi
+  done
+done
 
 echo "【1/5】LM Studio"
 prompt LMSTUDIO_URL "LM Studio 地址（如 http://192.168.1.11:1234）" "$PREV_URL"
@@ -257,9 +266,9 @@ echo
 echo "【4/5】要下载的图书馆（可多选）"
 cat <<EOF
   空格分隔编号。每个库单独挂载，压缩包直接解压进该目录。
-  1) small   约 ${PACK_DOWNLOAD_GB_small} GB（建议空闲 ≥ ${PACK_FREE_GB_small} GB）
-  2) medium  约 ${PACK_DOWNLOAD_GB_medium} GB（建议空闲 ≥ ${PACK_FREE_GB_medium} GB）
-  3) all     约 ${PACK_DOWNLOAD_GB_all} GB（建议空闲 ≥ ${PACK_FREE_GB_all} GB）
+  1) small   约 ${PACK_DOWNLOAD_GB_small} GB（建议空闲 ≥ ${PACK_FREE_GB_small} GB）${PREV_LIB_PATH[small]:+ 已有: ${PREV_LIB_PATH[small]}}
+  2) medium  约 ${PACK_DOWNLOAD_GB_medium} GB（建议空闲 ≥ ${PACK_FREE_GB_medium} GB）${PREV_LIB_PATH[medium]:+ 已有: ${PREV_LIB_PATH[medium]}}
+  3) all     约 ${PACK_DOWNLOAD_GB_all} GB（建议空闲 ≥ ${PACK_FREE_GB_all} GB）${PREV_LIB_PATH[all]:+ 已有: ${PREV_LIB_PATH[all]}}
   回车沿用上次选择；输入 none 表示不下载，只挂载已有目录
 EOF
 read -r -p "  选择（例如 1 3；回车沿用上次${PREV_PACK:+: $PREV_PACK}；none=不下载）: " pack_picks || true
@@ -311,8 +320,8 @@ for id in "${PACK_IDS[@]}"; do
     read -r -p "  仍使用这个目录？[y/N]: " cont || true
     [[ "${cont:-}" =~ ^[Yy]$ ]] || die "已取消"
   fi
-  if [ -s "$one/library-data/catalog.json" ]; then
-    info "该目录已有图书馆，下载时会跳过"
+  if python3 "$ROOT/docker/fetch_pack.py" --check --pack "$id" --dest "$one"; then
+    info "已有 $id，不会重新下载"
   fi
   idx=$((idx + 1))
 done
@@ -382,8 +391,12 @@ BUILD_PID=$!
 i=0
 for id in "${PACK_IDS[@]}"; do
   if [ "$id" != "local" ]; then
-    info "下载 $id 到 ${PACK_PATHS[$i]}"
-    python3 "$ROOT/docker/fetch_pack.py" --pack "$id" --dest "${PACK_PATHS[$i]}"
+    if python3 "$ROOT/docker/fetch_pack.py" --check --pack "$id" --dest "${PACK_PATHS[$i]}"; then
+      ok "已有 $id（${PACK_PATHS[$i]}），跳过下载"
+    else
+      info "下载 $id 到 ${PACK_PATHS[$i]}"
+      python3 "$ROOT/docker/fetch_pack.py" --pack "$id" --dest "${PACK_PATHS[$i]}"
+    fi
   fi
   i=$((i + 1))
 done

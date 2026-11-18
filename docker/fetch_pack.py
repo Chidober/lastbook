@@ -88,17 +88,33 @@ def extract(zip_path, dest):
                     out.write(buf)
 
 
-def ready(dest):
-    p = Path(dest) / 'library-data' / 'catalog.json'
+def ready(dest, pack_id=None):
+    """True when dest already holds a library. If pack.json names a pack, it must be this one."""
+    root = Path(dest)
+    catalog = root / 'library-data' / 'catalog.json'
     try:
-        data = json.loads(p.read_text(encoding='utf-8'))
+        data = json.loads(catalog.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return False
-    return bool(data)
+    if isinstance(data, list):
+        if not data:
+            return False
+    elif isinstance(data, dict):
+        if not data:
+            return False
+    else:
+        return False
+    try:
+        name = json.loads((root / 'pack.json').read_text(encoding='utf-8')).get('name')
+    except (OSError, ValueError):
+        name = None
+    if pack_id and isinstance(name, str) and name and name != pack_id:
+        return False
+    return True
 
 
 def main():
-    pack_id, dest, force = None, None, False
+    pack_id, dest, force, check = None, None, False, False
     args = sys.argv[1:]
     i = 0
     while i < len(args):
@@ -111,14 +127,20 @@ def main():
         elif args[i] == '--force':
             force = True
             i += 1
+        elif args[i] == '--check':
+            check = True
+            i += 1
         else:
             die(f'unknown argument {args[i]}')
     if not pack_id or not dest:
-        die('usage: fetch_pack.py --pack small|medium|all --dest /path [--force]')
+        die('usage: fetch_pack.py --pack small|medium|all --dest /path [--check] [--force]')
     dest = Path(dest)
-    if ready(dest) and not force:
-        print(f'{dest} already has a library; skip (pass --force to replace files in place)')
+    if ready(dest, pack_id) and not force:
+        if not check:
+            print(f'{dest} already has {pack_id}; skip')
         return
+    if check:
+        raise SystemExit(1)
     packs = manifest()
     pack = packs.get(pack_id)
     if not pack:
