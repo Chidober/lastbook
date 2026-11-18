@@ -9,11 +9,14 @@ import hashlib
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
 
 MANIFEST = 'https://downloads.lastbook.org/manifest-v1.json'
+# downloads.lastbook.org answers 403 to Python's default User-Agent.
+UA = 'Lastbook-setup/1'
 
 
 def die(msg):
@@ -21,8 +24,22 @@ def die(msg):
     raise SystemExit(1)
 
 
+def open_url(url, headers=None, timeout=60):
+    hdrs = {'User-Agent': UA, 'Accept-Encoding': 'identity'}
+    if headers:
+        hdrs.update(headers)
+    req = urllib.request.Request(url, headers=hdrs)
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        body = e.read(200).decode('utf-8', 'replace').strip()
+        die(f'下载服务器拒绝了请求（HTTP {e.code}）{": " + body if body else ""}。地址: {url}')
+    except urllib.error.URLError as e:
+        die(f'无法连接下载服务器（{e.reason}）。地址: {url}')
+
+
 def manifest():
-    with urllib.request.urlopen(MANIFEST, timeout=60) as r:
+    with open_url(MANIFEST) as r:
         data = json.load(r)
     packs = {p['id']: p for p in data.get('packs') or [] if p.get('available')}
     return packs
@@ -32,11 +49,10 @@ def download(url, dest, size, sha256):
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + '.part')
     got = part.stat().st_size if part.exists() else 0
-    headers = {'User-Agent': 'lastbook-fetch'}
+    headers = {}
     if got and (not size or got < size):
         headers['Range'] = f'bytes={got}-'
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as r, open(part, 'ab' if got else 'wb') as f:
+    with open_url(url, headers, timeout=120) as r, open(part, 'ab' if got else 'wb') as f:
         if r.status == 200 and got:
             f.seek(0)
             f.truncate()
