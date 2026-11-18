@@ -496,25 +496,28 @@ def chat(messages, about, emit, cancelled):
     """Run one assistant turn. emit(event: dict) streams to the browser; cancelled() -> True stops early."""
     t0 = time.time()
     sess = Session()
-    msgs = [{'role': 'system', 'content': SYSTEM}]
+    # One system message, and only at the start. Some LM Studio templates (this error: "System message must be at the beginning") reject a system turn after the user.
+    lead = [SYSTEM]
     ctx = context_for(about, sess)
     if ctx:
-        msgs.append({'role': 'system', 'content': ctx})
+        lead.append(ctx)
+    history = []
     for m in messages[-12:]:
         if m.get('role') in ('user', 'assistant') and isinstance(m.get('content'), str):
-            msgs.append({'role': m['role'], 'content': m['content'][:6000]})
+            history.append({'role': m['role'], 'content': m['content'][:6000]})
     # Search for the question straight away: the person sees matching pages at once, and the model starts with them.
     question = next((m['content'] for m in reversed(messages) if m.get('role') == 'user' and isinstance(m.get('content'), str)), '')
+    notes = []
     if question and not about:
         if not S.library.DB.is_file():
             hits = []
-            msgs.append({'role': 'system', 'content': 'The library keyword index is not on this computer yet (setup may still be downloading or unpacking). Tell the person the library is not ready; do not invent library pages.'})
+            notes.append('The library keyword index is not on this computer yet (setup may still be downloading or unpacking). Tell the person the library is not ready; do not invent library pages.')
         else:
             try:
                 hits = hybrid(question[:300], 8)
             except sqlite3.OperationalError:
                 hits = []
-                msgs.append({'role': 'system', 'content': 'The library index could not be opened. Tell the person search is unavailable right now; do not invent library pages.'})
+                notes.append('The library index could not be opened. Tell the person search is unavailable right now; do not invent library pages.')
         if hits:
             blocks = []
             for n, h in enumerate(hits):
@@ -525,10 +528,11 @@ def chat(messages, about, emit, cancelled):
                     if 0 < h['page'] <= len(ps):
                         body = re.sub(r'[ \t]{2,}', ' ', ps[h['page'] - 1]).strip()[:3200]
                 blocks.append(_src_block(sess.add(h), h, body))
-            msgs.append({'role': 'system', 'content': 'Initial library search results for the latest question (already retrieved — search again only if these are not enough; use read_pages to check exact wording):\n\n' + '\n\n'.join(blocks)})
+            notes.append('Initial library search results for the latest question (already retrieved — search again only if these are not enough; use read_pages to check exact wording):\n\n' + '\n\n'.join(blocks))
         elif S.library.DB.is_file():
-            msgs.append({'role': 'system', 'content': 'An initial library search for the latest question found nothing. Try other wording once; if still nothing, say the library does not cover it.'})
+            notes.append('An initial library search for the latest question found nothing. Try other wording once; if still nothing, say the library does not cover it.')
         emit({'type': 'found', 'count': len(hits)})
+    msgs = [{'role': 'system', 'content': '\n\n'.join(lead + notes)}] + history
     if sess.sources:
         emit({'type': 'sources', 'sources': list(sess.sources.values())})
     answer, first_tok, tool_log, state = '', None, [], [None]
@@ -540,7 +544,8 @@ def chat(messages, about, emit, cancelled):
     local = local_on()
     tools = [t for t in TOOLS if t['function']['name'] != 'view_page'] if local else TOOLS   # the local model reads text only
     if local:
-        msgs[0] = {'role': 'system', 'content': SYSTEM_TEXT_ONLY}
+        lead[0] = SYSTEM_TEXT_ONLY
+        msgs[0] = {'role': 'system', 'content': '\n\n'.join(lead + notes)}
         set_state('starting')
         shown = [None]
 
@@ -564,7 +569,7 @@ def chat(messages, about, emit, cancelled):
     for rnd in range(MAX_ROUNDS + 1):
         last = rnd == MAX_ROUNDS
         if last:
-            msgs.append({'role': 'system', 'content': 'Stop searching now. Write the answer using only the sources already retrieved, with their keys. If they are not enough, say what is missing under "Not found in the library:".'})
+            msgs.append({'role': 'user', 'content': 'Stop searching now. Write the answer using only the sources already retrieved, with their keys. If they are not enough, say what is missing under "Not found in the library:".'})
         set_state('thinking' if rnd == 0 else 'reading')
         got = (_local_round if local else _http_round)(msgs, None if last else tools, cancelled, wrote, set_state)
         if got in ('stopped', None):
@@ -581,7 +586,7 @@ def chat(messages, about, emit, cancelled):
                 first_tok = rf
             if answer.strip() or last:
                 break
-            msgs.append({'role': 'system', 'content': 'Your reply was empty. Answer the question now.'})
+            msgs.append({'role': 'user', 'content': 'Your reply was empty. Answer the question now.'})
             continue
         msgs.append({'role': 'assistant', 'content': content or '', 'tool_calls': [
             {'id': c['id'] or f'call_{i}', 'type': 'function', 'function': {'name': c['name'], 'arguments': c['args'] or '{}'}} for i, c in sorted(calls.items())]})

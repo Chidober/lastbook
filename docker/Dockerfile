@@ -28,7 +28,9 @@ COPY . /app
 RUN chmod +x /app/docker/entrypoint.sh \
  && python3 -c "import libzim, numpy, bs4, pypdfium2; print('deps ok')"
 
-VOLUME ["/data/LastbookData"]
+# Do not VOLUME /data/LastbookData. Setup renames that directory after unpacking
+# LastbookData.setup. A volume mount point cannot be renamed, so the switch fails
+# and the host folder stays the empty stub.
 EXPOSE 8890
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
