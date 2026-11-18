@@ -26,8 +26,8 @@ export MODEL_PROXY_PORT
 export XDG_CONFIG_HOME
 export LMSTUDIO_URL
 export LMSTUDIO_TOKEN
-mkdir -p "$XDG_CONFIG_HOME" "$LASTBOOK_DATA" "$LASTBOOK_DATA/derived" "$LASTBOOK_DATA/library-data" /app/setup
-# Source tree has no release manifest; fetch once so /api/setup/start knows Small/Medium/All URLs.
+mkdir -p "$XDG_CONFIG_HOME" "$LASTBOOK_DATA" /app/setup
+# Do not create catalog.json here. An empty file counts as a library and hides a failed switch.
 if [ ! -s /app/setup/manifest-v1.json ]; then
   echo "fetching setup manifest from downloads.lastbook.org…"
   if curl -fsS --connect-timeout 15 --max-time 60 \
@@ -57,6 +57,9 @@ try:
     if lib:
         print("setup: library after pending:", lib, flush=True)
     setup_api.opened(settings, data, note)
+    lib_dir = data / "library-data"
+    n = sum(1 for p in lib_dir.rglob("*") if p.is_file()) if lib_dir.is_dir() else 0
+    print(f"setup: library-data files={n}", flush=True)
 except Exception:
     traceback.print_exc()
     print("setup: pending apply skipped (non-fatal)", flush=True)

@@ -1,5 +1,9 @@
 # Source only. The library, models, packs and everything built from them stay out.
+# Docker mounts and setup downloads (bash docker/deploy.sh → ./data/).
 /data/
+/LastbookData/
+/LastbookData.setup/
+*.part
 /library-data
 /derived/*
 !/derived/packs/

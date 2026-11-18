@@ -1725,7 +1725,7 @@ class Handler(library.Handler):
         return bool(self.HOST_SYNTAX.fullmatch(host))
 
     def host_ok(self):
-        """Only localhost or a bare IP address. A web page using DNS rebinding arrives under its own domain name and is refused."""
+        """Localhost or a bare IP. A name is refused on loopback (DNS rebinding). A LAN client may use a hostname; the access key still gates it."""
         host = urllib.parse.urlsplit('//' + (self.headers.get('Host') or 'localhost')).hostname or ''
         if host == 'localhost':
             return True
@@ -1733,7 +1733,10 @@ class Handler(library.Handler):
             ipaddress.ip_address(host)
             return True
         except ValueError:
-            return False
+            pass
+        ip = self.client_address[0]
+        loopback = ip in ('127.0.0.1', '::1') or ip.startswith('::ffff:127.')
+        return (not loopback) and bool(LAN_KEY)
 
     def origin_ok(self):
         """A browser POST from any other page, or from a sandboxed saved page, carries a different or null Origin."""

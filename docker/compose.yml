@@ -25,8 +25,7 @@ services:
       SURVIVAL_REASONING_EFFORT: ${SURVIVAL_REASONING_EFFORT:-none}
       LASTBOOK_LAN: ${LASTBOOK_LAN:-0}
     volumes:
-      # Prefer absolute paths (deploy.sh writes $PWD/data/...). Relative paths are
-      # resolved from the compose file's directory (docker/).
-      - ${LASTBOOK_DATA_HOST:?set LASTBOOK_DATA_HOST}:/data/LastbookData
-      # Setup job + pending switch (must survive restart)
-      - ${LASTBOOK_CONFIG_HOST:?set LASTBOOK_CONFIG_HOST}:/data/config
+      # Mount the parent, not LastbookData itself. Setup downloads into
+      # /data/LastbookData.setup and renames that folder into /data/LastbookData.
+      # A mount point cannot be renamed, which leaves the host folder nearly empty.
+      - ${LASTBOOK_HOST_ROOT:?set LASTBOOK_HOST_ROOT}:/data

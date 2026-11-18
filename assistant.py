@@ -90,9 +90,12 @@ def model_status():
 # --------------------------------------------------------------- retrieval --
 def _fts(q, limit=80, kinds=None):
     content, groups = S.query_groups(q)
-    if not groups:
+    if not groups or not S.library.DB.is_file():
         return []
-    con = sqlite3.connect(ro_uri(S.library.DB), uri=True)
+    try:
+        con = sqlite3.connect(ro_uri(S.library.DB), uri=True)
+    except sqlite3.OperationalError:
+        return []
     sql = ("SELECT doc_id,page,snippet(pages,6,'','',' … ',40) FROM pages WHERE pages MATCH ? "
            "ORDER BY bm25(pages,0,6,1,1,0,0,1) LIMIT ?")
     rows = []
@@ -102,7 +105,8 @@ def _fts(q, limit=80, kinds=None):
             rows += con.execute(sql, (' OR '.join('(' + S.fts_expr([g]) + ')' for g in groups), limit)).fetchall()
     except sqlite3.OperationalError:
         pass
-    con.close()
+    finally:
+        con.close()
     return rows
 
 
@@ -131,7 +135,10 @@ def hybrid(q, k=8, kind='any', doc=None):
         if not allowed(doc_id):
             continue
         kw.append((doc_id, page if cat['by_id'][doc_id]['kind'] == 'pdf' else None, None, snip))
-    sem = INDEX.semantic(q, 80, allowed) if INDEX else []
+    try:
+        sem = INDEX.semantic(q, 80, allowed) if INDEX else []
+    except sqlite3.OperationalError:
+        sem = []
     sem_l = [(s['doc_id'], s['page'] if cat['by_id'][s['doc_id']]['kind'] == 'pdf' else None, s['t'], s['text'], s['sem']) for s in sem]
     key = lambda d, p, t: (d, p, None if t is None else int(t // 45))
     qwords = [w for w in re.findall(r'[a-z0-9-]{3,}', q.lower()) if w not in S.STOP]
@@ -499,7 +506,15 @@ def chat(messages, about, emit, cancelled):
     # Search for the question straight away: the person sees matching pages at once, and the model starts with them.
     question = next((m['content'] for m in reversed(messages) if m.get('role') == 'user' and isinstance(m.get('content'), str)), '')
     if question and not about:
-        hits = hybrid(question[:300], 8)
+        if not S.library.DB.is_file():
+            hits = []
+            msgs.append({'role': 'system', 'content': 'The library keyword index is not on this computer yet (setup may still be downloading or unpacking). Tell the person the library is not ready; do not invent library pages.'})
+        else:
+            try:
+                hits = hybrid(question[:300], 8)
+            except sqlite3.OperationalError:
+                hits = []
+                msgs.append({'role': 'system', 'content': 'The library index could not be opened. Tell the person search is unavailable right now; do not invent library pages.'})
         if hits:
             blocks = []
             for n, h in enumerate(hits):
@@ -511,7 +526,7 @@ def chat(messages, about, emit, cancelled):
                         body = re.sub(r'[ \t]{2,}', ' ', ps[h['page'] - 1]).strip()[:3200]
                 blocks.append(_src_block(sess.add(h), h, body))
             msgs.append({'role': 'system', 'content': 'Initial library search results for the latest question (already retrieved — search again only if these are not enough; use read_pages to check exact wording):\n\n' + '\n\n'.join(blocks)})
-        else:
+        elif S.library.DB.is_file():
             msgs.append({'role': 'system', 'content': 'An initial library search for the latest question found nothing. Try other wording once; if still nothing, say the library does not cover it.'})
         emit({'type': 'found', 'count': len(hits)})
     if sess.sources:
