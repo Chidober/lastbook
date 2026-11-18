@@ -396,10 +396,16 @@ info "构建并启动容器…"
 (cd "$ROOT" && docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build)
 
 info "等待服务就绪…"
-if wait_http "http://127.0.0.1:${LASTBOOK_PORT}/" 90; then
+if wait_http "http://127.0.0.1:${LASTBOOK_PORT}/" 120; then
   ok "服务已监听 http://127.0.0.1:${LASTBOOK_PORT}/"
 else
-  echo "  警告: 端口尚未响应，查看日志: docker logs -f lastbook"
+  echo
+  echo "======== 容器未能在端口 ${LASTBOOK_PORT} 提供服务 ========"
+  docker ps -a --filter name=lastbook || true
+  echo "-------- docker logs lastbook (tail) --------"
+  docker logs --tail 120 lastbook 2>&1 || true
+  echo "=========================================================="
+  die "服务未启动。请根据上方日志排查后重跑: bash docker/deploy.sh"
 fi
 
 HAS_LIB=0

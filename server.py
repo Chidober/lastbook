@@ -80,7 +80,10 @@ def excluded_videos():
 def catalog():
     excluded_videos()
     p = LIB / 'catalog.json'
-    m = p.stat().st_mtime
+    try:
+        m = p.stat().st_mtime
+    except FileNotFoundError:  # first-run / empty data folder (e.g. Docker before setup download)
+        return _cat
     if m != _cat['mtime']:
         with _cat_lock:
             if m != _cat['mtime']:

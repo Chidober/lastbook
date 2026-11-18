@@ -9,19 +9,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SURVIVAL_MODEL_BASE=http://127.0.0.1:19443 \
     SURVIVAL_REASONING_EFFORT=none
 
+# libzim wheel needs ICU/xz/zstd at runtime; ca-certificates for setup downloads.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
+      curl \
       libglib2.0-0 \
+      libicu72 \
+      libzstd1 \
+      liblzma5 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Same dependency set as the Linux package (keyword search; no onnxruntime).
 COPY packaging/linux/requirements_linux.txt /tmp/requirements_linux.txt
 RUN pip install --no-cache-dir -r /tmp/requirements_linux.txt
 
 COPY . /app
-RUN chmod +x /app/docker/entrypoint.sh
+RUN chmod +x /app/docker/entrypoint.sh \
+ && python3 -c "import libzim, numpy, bs4, pypdfium2; print('deps ok')"
 
 VOLUME ["/data/LastbookData"]
 EXPOSE 8890

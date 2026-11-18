@@ -24,53 +24,61 @@ export LASTBOOK_DATA
 export SURVIVAL_MODEL_BASE
 export MODEL_PROXY_PORT
 export XDG_CONFIG_HOME
-mkdir -p "$XDG_CONFIG_HOME" "$LASTBOOK_DATA"
+export LMSTUDIO_URL
+export LMSTUDIO_TOKEN
+mkdir -p "$XDG_CONFIG_HOME" "$LASTBOOK_DATA" "$LASTBOOK_DATA/derived" "$LASTBOOK_DATA/library-data"
+# Allow server boot before any pack is downloaded (setup UI / API still works).
+if [ ! -f "$LASTBOOK_DATA/library-data/catalog.json" ]; then
+  echo '[]' > "$LASTBOOK_DATA/library-data/catalog.json"
+  echo "seeded empty catalog.json (no library yet)"
+fi
 
 # Use the HTTP model path, not the bundled GGUF runner.
 unset LASTBOOK_LOCAL_AI || true
 
-# Apply any staged library switch from a previous setup download (desktop app does this in main.py).
-python3 - <<'PY'
-import os
+# Apply any staged library switch (desktop app does this in main.py). Never block boot.
+python3 - <<'PY' || true
+import os, traceback
 from pathlib import Path
-from engine.setup import api as setup_api
-
-settings = Path(os.environ["XDG_CONFIG_HOME"]) / "Lastbook"
-data = Path(os.environ["LASTBOOK_DATA"])
-lib, note = setup_api.startup(settings, only=data)
-if note:
-    print("setup: pending switch note:", note, flush=True)
-if lib:
-    print("setup: library after pending:", lib, flush=True)
-setup_api.opened(settings, data, note)
+try:
+    from engine.setup import api as setup_api
+    settings = Path(os.environ["XDG_CONFIG_HOME"]) / "Lastbook"
+    data = Path(os.environ["LASTBOOK_DATA"])
+    lib, note = setup_api.startup(settings, only=data)
+    if note:
+        print("setup: pending switch note:", note, flush=True)
+    if lib:
+        print("setup: library after pending:", lib, flush=True)
+    setup_api.opened(settings, data, note)
+except Exception:
+    traceback.print_exc()
+    print("setup: pending apply skipped (non-fatal)", flush=True)
 PY
 
-echo "starting model-proxy -> ${LMSTUDIO_URL}"
+echo "starting model-proxy -> ${LMSTUDIO_URL} on ${SURVIVAL_MODEL_BASE}"
 python3 /app/docker/model_proxy.py &
 PROXY_PID=$!
 
+# Wait until the proxy accepts TCP (upstream LM Studio may still be down).
 i=0
-while [ "$i" -lt 30 ]; do
+while [ "$i" -lt 20 ]; do
   if python3 - <<PY
-import os, urllib.request
-base = os.environ["SURVIVAL_MODEL_BASE"].rstrip("/")
-try:
-    urllib.request.urlopen(base + "/v1/models", timeout=2).read(64)
-    raise SystemExit(0)
-except Exception:
-    raise SystemExit(1)
+import os, socket, urllib.parse
+base = urllib.parse.urlparse(os.environ["SURVIVAL_MODEL_BASE"])
+s = socket.create_connection((base.hostname, base.port), timeout=1)
+s.close()
 PY
   then
+    echo "model-proxy is listening"
+    break
+  fi
+  if ! kill -0 "$PROXY_PID" 2>/dev/null; then
+    echo "WARNING: model-proxy exited early (Chat may be offline). Continuing so setup/UI can still run." >&2
     break
   fi
   i=$((i + 1))
-  sleep 0.5
+  sleep 0.25
 done
-
-if ! kill -0 "$PROXY_PID" 2>/dev/null; then
-  echo "model-proxy exited early" >&2
-  exit 1
-fi
 
 LAN_ARGS=
 if [ "${LASTBOOK_LAN:-0}" = "1" ]; then
@@ -79,4 +87,5 @@ if [ "${LASTBOOK_LAN:-0}" = "1" ]; then
 fi
 
 echo "starting lastbook server port=${PORT} data=${LASTBOOK_DATA}"
+# Keep proxy as child; if it dies, server keeps serving the library.
 exec python3 /app/server.py --data "$LASTBOOK_DATA" --port "$PORT" $LAN_ARGS "$@"
